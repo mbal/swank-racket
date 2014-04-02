@@ -15,14 +15,12 @@
     (let*-values [[[repl-tap local-sink] (make-pipe)]
                   [[local-tap repl-sink] (make-pipe)]]
                
-        (thread (λ []
-                 (parameterize [(current-input-port repl-tap)
+        (thread (lambda []
+                 (parameterize [[current-namespace (make-base-namespace)]
+                                (current-input-port repl-tap)
                                 (current-output-port repl-sink)
-                                (current-error-port repl-sink)
-                                (sandbox-path-permissions '((write "/")))
-                                (current-namespace (make-empty-namespace))]
-                               (parameterize [(current-eval (make-evaluator 'racket))]
-                                    (read-eval-print-loop)))))
+                                (current-error-port repl-sink)]
+                            (read-eval-print-loop))))
 
         ; read away the first prompt "> " - workaround?
         (read-bytes 2 local-tap)  
@@ -30,6 +28,8 @@
         (let mainloop []  
            (read i) ; We don't care about the size info ATM
            (let [[msg-result (handle-message (read i) local-sink local-tap)]]
+               (display "RESULT: ")
+               (display msg-result)
                (display (serialize-result-message msg-result) o)
                (flush-output o)) 
            (mainloop))))

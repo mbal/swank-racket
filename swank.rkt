@@ -1,9 +1,10 @@
 #lang racket
 
 (require racket/match
-         mzlib/os
          scribble/decode
-         srfi/13)
+         racket/enter
+         srfi/13
+         "getpid.rkt")
 
 (provide serialize-result-message
          handle-message
@@ -47,6 +48,9 @@
 (define [handle-message msg to-repl from-repl]
     (let* [[cmd (cadr msg)]
            [continuation (last msg)]]
+      (newline)
+      (display msg)
+      (newline)
         (match cmd
                [(list 'swank:connection-info) 
                 `(:return (:ok (:pid ,(getpid)
@@ -70,7 +74,22 @@
                [(list 'swank:simple-completions pattern _) 
                 `(:return (:ok ,(list (code-complete pattern) pattern)) ,continuation)]
                
+               [(list 'swank:compile-file-for-emacs fname load?)
+                ;; TODO: not really true, but hey!
+                `(:return (:ok (:compilation-result nil t 0.0 nil nil)) ,continuation)]
+
+               [(list 'swank:load-file fname)
+                ;; XXX: doesn't work. I don't know why
+                (when (not (is-null? fname))
+                           (enter! fname)
+                           `(:return (:ok t)))]
+               
                [_ `(:return (:ok nil) ,continuation)])))
+
+(define (is-null? x)
+  (or (eq? x 'nil) (string=? x "nil")))
+(define (is-true? x)
+  (or (eq? x 't) (string=? x "t")))
 
 (define [serialize-result-message msg]
     (let [[stringified (~s msg)]]
