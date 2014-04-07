@@ -25,11 +25,26 @@ In a rough order of importance.
 - All the debugging stuff (macroexpand, ...)
 - Xref
 
-### Howto
+## Howto
+
+### Start the server
+To start the server, just run `racket servermb.rkt`. The main program starts a
+server on 127.0.0.1:4005, and you can connect with it either with emacs (`M-x
+slime-connect`) or SLIMV (load a scheme file and `<leader>c`).
+When the connection is successful, a REPL is started.
+Multiple clients are not supported.
+
+### The REPL
+The REPL is a more or less like racket's built-in. 
 
 Developed using Racket 6.0 (and tested under 5.93, should work on every
-reasonably recent version). Tested under SLIMV, Python27 and Windows.
-Run `racket server.rkt` to get the thing up and running.
+reasonably recent version). 
+
+Tested under Windows:
+* (g)Vim 7.4 + Python2.7 + SLIMV 0.9.12
+* emacs 24.2 + slime (very briefly)
+
+Under emacs it's very unstable (mainly *slow*), since it's still incomplete. It's better under slimv.
 
 ### License
 

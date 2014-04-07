@@ -1,20 +1,27 @@
 #lang racket
 
-(require racket/tcp
-         "getpid.rkt"
-         racket/sandbox)
-
-;; transport layer stuff
-(define (swank-serialize msg)
-  (let ([stringified (~s msg)])
-   (string-append (~r (+ (string-length stringified) 1) 
-                      #:base 16 #:min-width 6 #:pad-string "0") 
-                  stringified "\n")))
+(require 
+  racket/tcp
+  racket/sandbox
+  racket/base
+  (only-in srfi/13 string-prefix-ci?)
+  "getpid.rkt"
+  "util.rkt")
 
 (define listener (tcp-listen 4005 5 #t))
 (displayln "Running racket-swank on port 4005")
 
-(define (code-complete a) '())
+(define racket-base-symbols
+  (let-values ([(procs1 procs2) (module->exports 'racket)])
+              (map symbol->string 
+                   (filter symbol? (flatten (append procs1 procs2))))))
+
+;; for now, let's just be happy with a `starts-with` completion.
+;; TODO: fuzzy completion (or at least, a bit smarter than this)
+(define (code-complete pattern)
+  (let ([candidates 
+         (filter (curry string-prefix-ci? pattern) racket-base-symbols)])
+   (if (empty? candidates) 'nil candidates)))
 
 (define (start-server)
   (displayln "Waiting for the client to connect")
@@ -35,9 +42,24 @@
   (display "server ended"))
 
 (define (swank-evaluation parent-thread)
-  (parameterize ([current-namespace (make-base-empty-namespace)]
+  (parameterize ([current-namespace (make-base-namespace)]
                  [current-eval (make-evaluator 'racket/base)])
-                (continuously (dispatch-eval parent-thread (thread-receive)))))
+                (begin
+                  (display (current-namespace)) 
+                  (continuously 
+                    (dispatch-eval parent-thread (thread-receive))))))
+
+(define (pprint-eval-result res)
+  (cond ([not res] "; Nothing to evaluate")
+        ([void? res] "; No value")
+        ([exn? res]
+         ;; the exception has already been handled. We should only print it
+         (string-append (exn-message res)
+                        (if (exn:srclocs? exn) 
+                          (exn:srclocs-accessor exn)
+                          "")))
+        (else 
+          (~s res #:max-width 100))))
 
 (define (dispatch-eval pthread cmd)
   (match cmd
@@ -46,12 +68,32 @@
           ;; so, first thing, we have to trim and read it.
           (let ([stripped (string-trim string-sexp #:repeat? #t)])
             (when (not (string=? stripped ""))
+              (display "> namespace during eval")
+              (displayln (current-namespace))
+              (displayln (namespace-mapped-symbols))
               (let* ([in (open-input-string string-sexp)]
-                     [stx ((current-read-interaction) (object-name in) in)])
-                ;; FIXME: we should install an error handler.
+                     [stx ((current-read-interaction) (object-name in) in)]
+                     [results 
+                      (with-handlers ([exn:fail? (lambda (exn) exn)])
+                                     ((current-eval) stx))])
                 (thread-send pthread (list 'eval-result 
-                                           ((current-eval) stx) 
-                                           cont)))))]))
+                                           (pprint-eval-result results)
+                                           cont)))))]
+         [(list 'arglist fnsym cont)
+          (let* ([fnobj 
+                  (namespace-variable-value fnsym #t (lambda x (lambda () 3)))]
+                 [fnarity (procedure-arity fnobj)])
+            (display "computing arglist")
+            (displayln (current-namespace))
+            (displayln fnobj)
+            (display "has arity")
+
+            (displayln fnarity)
+            (newline))
+
+          (thread-send
+            pthread
+            (list 'return `(:return (:ok nil) ,cont)))]))
 
 (define (control-loop/mb input output)
   (continuously (dispatch-event (thread-receive) output)))
@@ -84,8 +126,18 @@
             (cadr data) out))
          ([eq? action 'eval-result]
           (write-to-connection 
-            `(:return (:ok (:values ,(cadr data))) ,(caddr data)) out))
+            `(:return (:ok (:values ,(cadr data))) ,(caddr data))
+            out))
          ([#t (display "not yet supported")]))))
+
+
+(define (spawn-thread p c f)
+  ;; spawns a thread to execute the sexp `f`.
+  (thread
+    (lambda () 
+      (begin
+        (f)
+        (thread-send p (list 'return `(:return (:ok ("[x]") ,c))))))))
 
 (define (handle-emacs-command data) 
   ;; This function is kind of ugly, because it matches all the possible
@@ -98,6 +150,7 @@
   ;; another thread: we put the response in the mailbox of *this same thread*.
   ;; Then, the control thread will retrieve the response (that it put there)
   ;; and send it on the wire.
+  (displayln data)
   (let ([cmd (cadr data)]
         ;; It's mainly "Racket" ?
         [ns (caddr data)]
@@ -120,10 +173,10 @@
             (thread-send 
               (current-thread)
               (list 'return `(:return (:ok nil) ,cont)))]
-           [(list 'swank:create-repl nil)
+           [(list 'swank:create-repl _ ...)
             (thread-send
               (current-thread)
-              (list 'return `(:return (:ok "racket" "racket") ,cont)))]
+              (list 'return `(:return (:ok ("racket" "racket")) ,cont)))]
            [(list 'swank:listener-eval code) 
             (let ([eval-thread (get-thread thread (current-thread))])
               (thread-send eval-thread (list 'eval code cont)))]
@@ -133,6 +186,12 @@
               (list 'return 
                     `(:return (:ok ,(list (code-complete pattern) pattern)) 
                       ,cont)))]
+
+           [(list 'swank:operator-arglist fn a)
+            (let ([eval-thread (get-thread ':repl-thread (current-thread))])
+              (thread-send eval-thread 
+                           (list 'arglist (string->symbol fn) cont)))]
+
            [(list 'swank:compile-file-for-emacs fname load?)
             (thread-send
               (current-thread)
@@ -145,12 +204,3 @@
                 (list 'return `(:return (:ok nil) ,cont)))])))
 
 (start-server)
-
-;; util
-(define-syntax continuously
-  (syntax-rules ()
-                ((continuously f)
-                 (let loop ()
-                  f
-                  (loop)))))
-
