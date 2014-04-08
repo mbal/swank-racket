@@ -42,16 +42,15 @@
   (display "server ended"))
 
 (define (swank-evaluation parent-thread)
-  (parameterize ([current-namespace (make-base-namespace)]
-                 [current-eval (make-evaluator 'racket/base)])
-                (begin
-                  (display (current-namespace)) 
-                  (continuously 
-                    (dispatch-eval parent-thread (thread-receive))))))
+  ;; we don't use make-evaluator in racket/base because we can assume
+  ;; to trust the user herself (that is, ourselves, since it's mainly
+  ;; run locally)
+  (parameterize ([current-namespace (make-base-namespace)])
+                (continuously 
+                  (dispatch-eval parent-thread (thread-receive)))))
 
 (define (pprint-eval-result res)
-  (cond ([not res] "; Nothing to evaluate")
-        ([void? res] "; No value")
+  (cond ([void? res] "; No value")
         ([exn? res]
          ;; the exception has already been handled. We should only print it
          (string-append (exn-message res)
@@ -68,32 +67,54 @@
           ;; so, first thing, we have to trim and read it.
           (let ([stripped (string-trim string-sexp #:repeat? #t)])
             (when (not (string=? stripped ""))
-              (display "> namespace during eval")
               (displayln (current-namespace))
-              (displayln (namespace-mapped-symbols))
               (let* ([in (open-input-string string-sexp)]
                      [stx ((current-read-interaction) (object-name in) in)]
                      [results 
                       (with-handlers ([exn:fail? (lambda (exn) exn)])
-                                     ((current-eval) stx))])
+                                     (eval stx))])
                 (thread-send pthread (list 'eval-result 
                                            (pprint-eval-result results)
                                            cont)))))]
          [(list 'arglist fnsym cont)
-          (let* ([fnobj 
-                  (namespace-variable-value fnsym #t (lambda x (lambda () 3)))]
-                 [fnarity (procedure-arity fnobj)])
-            (display "computing arglist")
-            (displayln (current-namespace))
-            (displayln fnobj)
-            (display "has arity")
+          (let ([fnobj (with-handlers 
+                         ([exn:fail? (lambda (exn) #f)])
+                         (namespace-variable-value fnsym))])
+            (if fnobj
+              (let* ([fnarity (procedure-arity fnobj)]
+                     [prntarity (make-string-from-arity fnarity)])
+                (thread-send pthread 
+                             (list 'return
+                                   `(:return (:ok ,prntarity) ,cont))))
+              (thread-send pthread
+                           (list 'return `(:return (:ok "([x])") ,cont)))))]))
 
-            (displayln fnarity)
-            (newline))
-
-          (thread-send
-            pthread
-            (list 'return `(:return (:ok nil) ,cont)))]))
+(define (make-string-from-arity fnarity)
+  (define (prototype-from-int int)
+    ;; unluckly, racket doesn't provide a way to get the argument list
+    ;; (i.e. ccl:arglist or clojure's metadata of the variable). 
+    ;; Therefore, we will invent the names of the arguments
+    ;; well, geiser *does* contain the code to do that, so I will look into it.
+    ;; even though it seems that it parses the code, so for now I will 
+    ;; just be happy with this little hack.
+    (string-join
+      (map string
+           (map integer->char 
+                (map 
+                  (lambda (x) (+ x 97)) ;; let's just use letters from #\a
+                  (range 0 int))))))
+  (cond ([exact-nonnegative-integer? fnarity] 
+         (string-append "(" (prototype-from-int fnarity) ")"))
+        ([arity-at-least? fnarity] 
+         (let ([args (prototype-from-int (arity-at-least-value fnarity))])
+          (string-append "("
+                        args
+                         (if (string=? args "")
+                           ""
+                           " ")
+                         "...)")))
+        (else ;; it's a list of possible arities: which to show?
+          "([x])")))
 
 (define (control-loop/mb input output)
   (continuously (dispatch-event (thread-receive) output)))
@@ -130,14 +151,6 @@
             out))
          ([#t (display "not yet supported")]))))
 
-
-(define (spawn-thread p c f)
-  ;; spawns a thread to execute the sexp `f`.
-  (thread
-    (lambda () 
-      (begin
-        (f)
-        (thread-send p (list 'return `(:return (:ok ("[x]") ,c))))))))
 
 (define (handle-emacs-command data) 
   ;; This function is kind of ugly, because it matches all the possible
