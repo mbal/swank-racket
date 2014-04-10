@@ -13,14 +13,13 @@ working with SLIME (Emacs) or SLIMV (Vim).
 ### Status & limitations
 
 - Basic evaluation and code completion works
+- File loading
+- basic documentation access in the minibuffer
 - Only tested with Vim & SLIMV - Emacs & SLIME testers needed!
 
 ### Missing
 In a rough order of importance.
 
-- Compile
-- Load (in Racket, the correct way is using `(enter! filename)`
-- Eldoc-like functions prototypes in the minibuffer
 - Documentation access
 - All the debugging stuff (macroexpand, ...)
 - Xref
@@ -35,7 +34,19 @@ When the connection is successful, a REPL is started.
 Multiple clients are not supported.
 
 ### The REPL
-The REPL is a more or less like racket's built-in. 
+The REPL is a more or less like racket's built-in. You can type expressions,
+followed by enter. Racket will reply with the result of the evaluation.
+In the minibuffer you'll see information about the arities of the function
+you're about to call. 
+
+For example: if you write `(car` in the REPL, the minibuffer will show `(car
+a)`. This happens also with user defined functions.
+
+### File loading
+Compile and Load is the command you're looking for. The file is loaded and the
+current namespace is switched to the one in the current file. It's basically
+equivalent to racket's `enter!`. Any error is shown during the compilation
+process.
 
 Developed using Racket 6.0 (and tested under 5.93, should work on every
 reasonably recent version). 
