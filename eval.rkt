@@ -37,6 +37,17 @@
               (string-split code "\n"))))
   (strip-lang-directive (string-trim c #:repeat? #t)))
 
+;; for now, let's just be happy with a `starts-with` completion.
+;; TODO: fuzzy completion (or at least, a bit smarter than this)
+(define (code-complete pattern)
+  (let ([candidates (filter 
+                      (curry string-prefix-ci? pattern) 
+                      (currently-defined-symbols))])
+   (if (empty? candidates) 'nil (sort candidates < #:key string-length))))
+
+(define (currently-defined-symbols)
+  (map symbol->string (namespace-mapped-symbols)))
+
 (define (dispatch-eval pthread cmd)
   (match cmd
          [(list 'eval string-sexp cont)
@@ -52,6 +63,20 @@
                 (thread-send pthread (list 'eval-result 
                                            (pprint-eval-result results)
                                            cont)))))]
+
+         [(list 'complete pattern cont)
+          ;; now, there is a concern:
+          ;; if you define a function in the repl, the auto-completer finds it even
+          ;; in the racket buffer. When you load the buffer with `compile and
+          ;; load`, you get an error (if you called that function), since the
+          ;; namespace used for compilation is different from the one used to do the
+          ;; rest of the things. It's not a bug, it's a feature!
+          (thread-send
+            pthread
+            (list 'return 
+                  `(:return 
+                     (:ok ,(list (code-complete pattern) pattern)) ,cont)))]
+         
          [(list 'arglist fnsym cont)
           (let ([fnobj (with-handlers 
                          ([exn:fail? (lambda (exn) #f)])
@@ -82,7 +107,7 @@
               pthread
               (list 'return 
                     `(:return 
-                       (:ok (:compilation-result nil pippo 0.0 nil mario)) 
+                       (:ok (:compilation-result nil t 0.0 nil nil)) 
                        ,cont)))
             (current-namespace (module->namespace (string->path modname))))]))
 

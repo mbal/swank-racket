@@ -25,6 +25,7 @@
            (spawn-repl-thread parent)))))
 
 (define (dispatch-event data out)
+  ;; this way to handle events resembles a bit erlang's.
   (displayln data)
   (flush-output (current-output-port))
   (let ([action (car data)])
@@ -77,23 +78,24 @@
                                     :lisp-implementation
                                     (:type "Racket" :version ,(version)))) 
                       ,cont)))]
+
            [(list 'swank:swank-require _)
             (thread-send 
               (current-thread)
               (list 'return `(:return (:ok nil) ,cont)))]
+
            [(list 'swank:create-repl _ ...)
             (thread-send
               (current-thread)
               (list 'return `(:return (:ok ("racket" "racket")) ,cont)))]
+
            [(list 'swank:listener-eval code) 
             (let ([eval-thread (get-thread thread (current-thread))])
               (thread-send eval-thread (list 'eval code cont)))]
+
            [(list 'swank:simple-completions pattern _) 
-            (thread-send
-              (current-thread)
-              (list 'return 
-                    `(:return (:ok ,(list (code-complete pattern) pattern)) 
-                      ,cont)))]
+            (let ([eval-thread (get-thread ':repl-thread (current-thread))])
+              (thread-send eval-thread (list 'complete pattern cont)))]
 
            [(list 'swank:operator-arglist fn a)
             (let ([eval-thread (get-thread ':repl-thread (current-thread))])
