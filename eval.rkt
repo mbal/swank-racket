@@ -92,7 +92,7 @@
     :location ,(build-source-error-location exn)))
 
 (define (build-source-error-location e) 
-  (:error "No source location"))
+  '(:error "No source location"))
 
 (define (make-string-from-arity fnarity)
   (define (prototype-from-int int)

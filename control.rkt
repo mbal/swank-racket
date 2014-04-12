@@ -119,7 +119,7 @@
 (define (code-complete pattern)
   (let ([candidates 
          (filter (curry string-prefix-ci? pattern) racket-base-symbols)])
-   (if (empty? candidates) 'nil (sort candidates > #:key length))))
+   (if (empty? candidates) 'nil (sort candidates < #:key string-length))))
 
 (define racket-base-symbols
   (let-values ([(procs1 procs2) (module->exports 'racket)])
