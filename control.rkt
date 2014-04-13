@@ -1,3 +1,9 @@
+;;; Contains the code for the control thread.
+;;;
+;;; In swank, the control thread is always running, it receives all the
+;;; commands and dispatches them to the correct thread. Moreoever, it collects
+;;; all the results from the spawned threads.
+;;;
 #lang racket
 (require racket/base
          (only-in srfi/13 string-prefix-ci?)
@@ -40,6 +46,7 @@
             out))
          ([#t (display "not yet supported")]))))
 
+(define protocol-version "2013-03-08")
 
 (define (handle-emacs-command data) 
   ;; This function is kind of ugly, because it matches all the possible
@@ -76,7 +83,8 @@
                                     :package (:name racket :prompt racket)
                                     :encoding (:coding-systems ("utf-8-unix"))
                                     :lisp-implementation
-                                    (:type "Racket" :version ,(version)))) 
+                                    (:type "Racket" :version ,(version))
+                                    :version ,protocol-version)) 
                       ,cont)))]
 
            [(list 'swank:swank-require _)
@@ -102,9 +110,20 @@
               (thread-send eval-thread 
                            (list 'arglist (string->symbol fn) cont)))]
 
+           [(list 'swank:swank-macroexpand-1 form)
+            (let ([eval-thread (get-thread ':repl-thread (current-thread))])
+              (thread-send eval-thread (list 'expand 1 form cont)))]
+
+           [(list 'swank:swank-macroexpand-all form)
+            (let ([eval-thread (get-thread ':repl-thread (current-thread))])
+              (thread-send eval-thread (list 'expand 0 form cont)))]
+
+           [(list 'swank:autodoc command _ ...)
+            (list 'return `(:return (:ok "([x])") ,cont))]
+
            [(list 'swank:compile-file-for-emacs fname load?)
             (let ([eval-thread (get-thread ':repl-thread (current-thread))])
-              (thread-send eval-thread (list 'compile-and-load fname cont)))]
+              (thread-send eval-thread (list 'compile fname load? cont)))]
 
            [_ (thread-send
                 (current-thread)
@@ -115,16 +134,3 @@
   (flush-output (current-output-port))
   (display (swank-serialize data) out)
   (flush-output out))
-
-;; for now, let's just be happy with a `starts-with` completion.
-;; TODO: fuzzy completion (or at least, a bit smarter than this)
-(define (code-complete pattern)
-  (let ([candidates 
-         (filter (curry string-prefix-ci? pattern) racket-base-symbols)])
-   (if (empty? candidates) 'nil (sort candidates < #:key string-length))))
-
-(define racket-base-symbols
-  (let-values ([(procs1 procs2) (module->exports 'racket)])
-              (map symbol->string 
-                   (filter symbol? (flatten (append procs1 procs2))))))
-

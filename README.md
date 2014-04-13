@@ -11,17 +11,18 @@ Swank server is what gives you an interactive Lisp / Scheme environment when
 working with SLIME (Emacs) or SLIMV (Vim).
 
 ### Status & limitations
+Here's a list of what is working:
 
-- Basic evaluation and code completion works
-- File loading
-- basic documentation access in the minibuffer
-- Only tested with Vim & SLIMV - Emacs & SLIME testers needed!
+- The REPL
+- basic completion (in vim, emacs not yet)
+- Compile & Load
+- Macroexpansion
 
 ### Missing
 In a rough order of importance.
 
 - Documentation access
-- All the debugging stuff (macroexpand, ...)
+- All the debugging stuff
 - Xref
 
 ## Howto
@@ -53,9 +54,7 @@ reasonably recent version).
 
 Tested under Windows:
 * (g)Vim 7.4 + Python2.7 + SLIMV 0.9.12
-* emacs 24.2 + slime (very briefly)
-
-Under emacs it's very unstable (mainly *slow*), since it's still incomplete. It's better under slimv.
+* (briefly) emacs 24.2 + slime
 
 ### License
 

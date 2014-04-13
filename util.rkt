@@ -1,3 +1,5 @@
+;;; Various utility functions.
+;;; 
 #lang racket
 (require racket/base)
 (provide swank-serialize

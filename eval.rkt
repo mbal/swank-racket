@@ -1,8 +1,16 @@
-#lang racket
+;;; Provides the functions for the evaluation thread.
+;;;
+;;; In the normal implementation of swank (so, the common lisp one, or even the
+;;; clojure one), the evaluation thread only evaluates stuff. However, in this
+;;; version, the evaluation thread does more: basically all the things pass
+;;; through this thread, since it's the only one that can access the namespace
+;;; currently in use.
 
+#lang racket
 (require racket/base
          racket/rerequire
          (only-in srfi/13 string-prefix-ci?)
+         "complete.rkt"
          "util.rkt")
 
 (provide swank-evaluation)
@@ -26,6 +34,11 @@
         (else 
           (~s res #:max-width 100))))
 
+
+(define (string->datum string-sexp)
+  (let ([in (open-input-string string-sexp)])
+   ((current-read-interaction) (object-name in) in)))
+
 (define (trim-code-for-eval c)
   ;; Trims the code entered in the repl for the evaluation. 
   ;; - removes extraneous whitespaces at the beginning or end of the string
@@ -37,16 +50,10 @@
               (string-split code "\n"))))
   (strip-lang-directive (string-trim c #:repeat? #t)))
 
-;; for now, let's just be happy with a `starts-with` completion.
-;; TODO: fuzzy completion (or at least, a bit smarter than this)
-(define (code-complete pattern)
-  (let ([candidates (filter 
-                      (curry string-prefix-ci? pattern) 
-                      (currently-defined-symbols))])
-   (if (empty? candidates) 'nil (sort candidates < #:key string-length))))
-
-(define (currently-defined-symbols)
-  (map symbol->string (namespace-mapped-symbols)))
+(define (send-back-to thread data cont)
+  (thread-send
+    thread
+    (list 'return `(:return (:ok ,data) ,cont))))
 
 (define (dispatch-eval pthread cmd)
   (match cmd
@@ -55,8 +62,7 @@
           ;; so, first thing, we have to trim and read it.
           (let ([stripped (trim-code-for-eval string-sexp)])
             (when (not (string=? stripped ""))
-              (let* ([in (open-input-string stripped)]
-                     [stx ((current-read-interaction) (object-name in) in)]
+              (let* ([stx (string->datum stripped)]
                      [results 
                       (with-handlers ([exn:fail? (lambda (exn) exn)])
                                      (eval stx))])
@@ -65,17 +71,24 @@
                                            cont)))))]
 
          [(list 'complete pattern cont)
-          ;; now, there is a concern:
-          ;; if you define a function in the repl, the auto-completer finds it even
-          ;; in the racket buffer. When you load the buffer with `compile and
-          ;; load`, you get an error (if you called that function), since the
-          ;; namespace used for compilation is different from the one used to do the
-          ;; rest of the things. It's not a bug, it's a feature!
-          (thread-send
-            pthread
-            (list 'return 
-                  `(:return 
-                     (:ok ,(list (code-complete pattern) pattern)) ,cont)))]
+          ;; now, there is a problem:
+          ;; if you define a function in the repl, the auto-completer finds it
+          ;; even in the racket buffer. When you load the buffer with
+          ;; `compile and load`, you get an error (if you called that
+          ;; function), since the namespace used for compilation is different
+          ;; from the one used to do the rest of the things. 
+          (send-back-to pthread
+                        (list (simple-complete pattern) pattern)
+                        cont)]
+
+         [(list 'expand times string-form cont)
+          (let ([form (string->datum string-form)])
+            (send-back-to
+              pthread
+              (pprint-eval-result
+                (syntax->datum
+                  ((if (= times 1) expand-once expand) form)))
+              cont))]
          
          [(list 'arglist fnsym cont)
           (let ([fnobj (with-handlers 
@@ -84,16 +97,17 @@
             (if fnobj
               (let* ([fnarity (procedure-arity fnobj)]
                      [prntarity (make-string-from-arity fnarity)])
-                (thread-send 
-                  pthread (list 'return `(:return (:ok ,prntarity) ,cont))))
-              (thread-send 
-                pthread (list 'return `(:return (:ok "([x])") ,cont)))))]
-         [(list 'compile-and-load modname cont)
+                (send-back-to pthread prntarity cont))
+              (send-back-to pthread "([x])" cont)))]
+
+         [(list 'compile modname load? cont)
+
           (with-handlers
             ([exn:fail?  
               ;; well, yes, we could be a little more specific, but there
               ;; are many ways in which the compilation process may fail:
               ;; we will handle them in the `build-error-message`.
+              ;; use time-apply to get the compilation time.
               (lambda (exn) 
                 (thread-send 
                   pthread 
@@ -102,13 +116,17 @@
                                          ,(list (build-error-message exn))
                                          nil 0.0 nil nil))
                           ,cont))))])
-            (dynamic-rerequire (string->path modname)) 
-            (thread-send
-              pthread
-              (list 'return 
-                    `(:return 
-                       (:ok (:compilation-result nil t 0.0 nil nil)) 
-                       ,cont)))
+
+            (let-values ([(_ time __ ___) 
+                          (time-apply
+                            dynamic-rerequire
+                            (list (string->path modname)))])
+                        (thread-send
+                          pthread
+                          (list 'return
+                                `(:return (:ok (:compilation-result nil t 
+                                                ,(/ time 1000.0) nil nil))
+                                  ,cont))))
             (current-namespace (module->namespace (string->path modname))))]))
 
 (define (build-error-message exn)
