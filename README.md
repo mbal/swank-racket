@@ -49,6 +49,14 @@ current namespace is switched to the one in the current file. It's basically
 equivalent to racket's `enter!`. Any error is shown during the compilation
 process.
 
+#### Vim & Emacs differences
+Note that SLIMV `Compile-File` (mapped to `<leader>F`) is functionally
+equivalent to `Compile-Load-File` (mapped to `<leader>L`), because it sends
+exactly the same command.
+With emacs, it works as expected: with `Compile-file` the file is compiled, but
+the functions are not available in the REPL. `Compile-Load-File` compiles and
+enters the module.
+
 Developed using Racket 6.0 (and tested under 5.93, should work on every
 reasonably recent version). 
 
