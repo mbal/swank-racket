@@ -39,17 +39,6 @@
   (let ([in (open-input-string string-sexp)])
    ((current-read-interaction) (object-name in) in)))
 
-(define (trim-code-for-eval c)
-  ;; Trims the code entered in the repl for the evaluation. 
-  ;; - removes extraneous whitespaces at the beginning or end of the string
-  ;; - removes the "#lang ..." directive present when the code is loaded
-  ;;   with load-buffer
-  (define (strip-lang-directive code)
-    (string-join
-      (filter (curry (compose1 not string-prefix-ci?) "#lang")
-              (string-split code "\n"))))
-  (strip-lang-directive (string-trim c #:repeat? #t)))
-
 (define (send-back-to thread data cont)
   (thread-send
     thread
@@ -60,15 +49,27 @@
          [(list 'eval string-sexp cont)
           ;; string-sexp is, as the name suggest, a string version of a sexp
           ;; so, first thing, we have to trim and read it.
-          (let ([stripped (trim-code-for-eval string-sexp)])
+          (let ([stripped (trim-code-for-eval string-sexp)]
+                [output-port (open-output-string)])
             (when (not (string=? stripped ""))
               (let* ([stx (string->datum stripped)]
                      [results 
-                      (with-handlers ([exn:fail? (lambda (exn) exn)])
-                                     (eval stx))])
-                (thread-send pthread (list 'eval-result 
-                                           (pprint-eval-result results)
-                                           cont)))))]
+                      (with-handlers 
+                        ([exn:fail? (lambda (exn) exn)])
+                        (parameterize ((current-output-port output-port))
+                                      (eval stx)))]
+                     [output (get-output-string output-port)])
+
+                (when (not (string=? output ""))
+                  (thread-send
+                    pthread
+                    (list 'return `(:write-string ,output))))
+
+                (thread-send 
+                  pthread 
+                  (list 'eval-result 
+                        (pprint-eval-result results)
+                        cont)))))]
 
          [(list 'complete pattern cont)
           ;; now, there is a problem:
@@ -89,7 +90,7 @@
                 (syntax->datum
                   ((if (= times 1) expand-once expand) form)))
               cont))]
-         
+
          [(list 'arglist fnsym cont)
           (let ([fnobj (with-handlers 
                          ([exn:fail? (lambda (exn) #f)])
@@ -101,6 +102,7 @@
               (send-back-to pthread "([x])" cont)))]
 
          [(list 'compile modname load? cont)
+          ;(compile modname load?)
 
           (with-handlers
             ([exn:fail?  
@@ -127,7 +129,8 @@
                                 `(:return (:ok (:compilation-result nil t 
                                                 ,(/ time 1000.0) nil nil))
                                   ,cont))))
-            (current-namespace (module->namespace (string->path modname))))]))
+            (when load? 
+              (current-namespace (module->namespace (string->path modname)))))]))
 
 (define (build-error-message exn)
   `(:message ,(exn-message exn)
@@ -156,7 +159,7 @@
         ([arity-at-least? fnarity] 
          (let ([args (prototype-from-int (arity-at-least-value fnarity))])
           (string-append "("
-                        args
+                         args
                          (if (string=? args "")
                            ""
                            " ")
