@@ -130,7 +130,8 @@
                                                 ,(/ time 1000.0) nil nil))
                                   ,cont))))
             (when load? 
-              (current-namespace (module->namespace (string->path modname)))))]))
+              (current-namespace (module->namespace 
+                                   (string->path modname)))))]))
 
 (define (build-error-message exn)
   `(:message ,(exn-message exn)
