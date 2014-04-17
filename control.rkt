@@ -48,17 +48,6 @@
 
 (define protocol-version "2013-03-08")
 
-(define (fix-truth-values data)
-  ;; changes truth values from lisp to scheme (nil -> #f, t -> #t).
-  ;; It leaves the rest unchanged.
-  (cond ([null? data] '()) 
-        ([eq? (car data) 'nil] (cons #f (fix-truth-values (cdr data))))
-        ([eq? (car data) 't] (cons #t (fix-truth-values (cdr data))))
-        ([list? (car data)]
-         (cons (fix-truth-values (car data))
-               (fix-truth-values (cdr data))))
-        (else (cons (car data) (fix-truth-values (cdr data))))))
-
 (define (handle-emacs-command data) 
   ;; This function is kind of ugly, because it matches all the possible
   ;; messages and dispatches them to the correct thread. 
@@ -78,7 +67,7 @@
   ;; have to load the file, we should also set it as default namespace for
   ;; the repl.
   (displayln data)
-  (let* ([data (fix-truth-values data)]
+  (let* ([data (schemify-truth-values data)]
          [cmd (cadr data)]
          ;; It's mainly "Racket" ?
          [ns (caddr data)]

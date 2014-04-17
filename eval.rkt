@@ -109,6 +109,7 @@
               ;; well, yes, we could be a little more specific, but there
               ;; are many ways in which the compilation process may fail:
               ;; we will handle them in the `build-error-message`.
+              ;;
               ;; use time-apply to get the compilation time.
               (lambda (exn) 
                 (thread-send 
@@ -119,7 +120,7 @@
                                          nil 0.0 nil nil))
                           ,cont))))])
 
-            (let-values ([(_ time __ ___) 
+            (let-values ([(_ time __ ___)
                           (time-apply
                             dynamic-rerequire
                             (list (string->path modname)))])
@@ -130,6 +131,7 @@
                                                 ,(/ time 1000.0) nil nil))
                                   ,cont))))
             (when load? 
+              ;; enter the namespace of the module
               (current-namespace (module->namespace 
                                    (string->path modname)))))]))
 
