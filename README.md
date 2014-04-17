@@ -11,12 +11,13 @@ Swank server is what gives you an interactive Lisp / Scheme environment when
 working with SLIME (Emacs) or SLIMV (Vim).
 
 ### Status & limitations
-Here's a list of what is working:
+Most of the basic stuff now works:
 
 - The REPL
 - basic completion (in vim, emacs not yet)
 - Compile & Load
 - Macroexpansion
+- Almost all of the `Evaluation` menu (defun, current-expression, region, buffer, interactive)
 
 ### Missing
 In a rough order of importance.
@@ -28,7 +29,7 @@ In a rough order of importance.
 ## Howto
 
 ### Start the server
-To start the server, just run `racket servermb.rkt`. The main program starts a
+To start the server, just run `racket server.rkt`. The main program starts a
 server on 127.0.0.1:4005, and you can connect with it either with emacs (`M-x
 slime-connect`) or SLIMV (load a scheme file and `<leader>c`).
 When the connection is successful, a REPL is started.
