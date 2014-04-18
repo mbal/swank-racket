@@ -99,7 +99,7 @@
               (let* ([fnarity (procedure-arity fnobj)]
                      [prntarity (make-string-from-arity fnarity)])
                 (send-back-to pthread prntarity cont))
-              (send-back-to pthread "([x])" cont)))]
+              (send-back-to pthread 'nil cont)))]
 
          [(list 'compile modname load? cont)
           ;(compile modname load?)
@@ -109,8 +109,6 @@
               ;; well, yes, we could be a little more specific, but there
               ;; are many ways in which the compilation process may fail:
               ;; we will handle them in the `build-error-message`.
-              ;;
-              ;; use time-apply to get the compilation time.
               (lambda (exn) 
                 (thread-send 
                   pthread 
@@ -145,7 +143,7 @@
 
 (define (make-string-from-arity fnarity)
   (define (prototype-from-int int)
-    ;; unluckly, racket doesn't provide a way to get the argument list
+    ;; unluckily, racket doesn't provide a way to get the argument list
     ;; (i.e. ccl:arglist or clojure's metadata of the variable). 
     ;; Therefore, we will invent the names of the arguments
     ;; well, geiser *does* contain the code to do that, so I will look into it.
