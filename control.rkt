@@ -2,7 +2,7 @@
 ;;;
 ;;; In swank, the control thread is always running, it receives all the
 ;;; commands and dispatches them to the correct thread. Moreoever, it collects
-;;; all the results from the spawned threads.
+;;; all the results from the spawned threads and sends them back to the editor.
 ;;;
 #lang racket
 (require racket/base
@@ -24,7 +24,7 @@
    thr))
 
 (define (get-thread t parent)
-  (cond ((eq? t 't) 'fail)
+  (cond ((eq? t #t) 'fail)
         ((eq? t ':repl-thread)
          (if repl-thread
            repl-thread
@@ -48,6 +48,10 @@
 
 (define protocol-version "2013-03-08")
 
+(define (send-to-repl data)
+  (let ([eval-thread (get-thread ':repl-thread (current-thread))])
+   (thread-send eval-thread data)))
+
 (define (handle-emacs-command data) 
   ;; This function is kind of ugly, because it matches all the possible
   ;; messages and dispatches them to the correct thread. 
@@ -69,9 +73,9 @@
   (displayln data)
   (let* ([data (schemify-truth-values data)]
          [cmd (cadr data)]
-         ;; It's mainly "Racket" ?
+         ;; namespace should be changed when loading a module.
          [ns (caddr data)]
-         ;; possibile values are: t (new thread) or repl-thread 
+         ;; possibile values are: #t (new thread) or repl-thread 
          [thread (cadddr data)] 
          ;; increasing numbers
          [cont (last data)])
@@ -103,28 +107,22 @@
               (thread-send eval-thread (list 'eval code cont)))]
 
            [(list 'swank:simple-completions pattern _) 
-            (let ([eval-thread (get-thread ':repl-thread (current-thread))])
-              (thread-send eval-thread (list 'complete pattern cont)))]
+            (send-to-repl (list 'complete pattern cont))]
 
            [(list 'swank:operator-arglist fn a)
-            (let ([eval-thread (get-thread ':repl-thread (current-thread))])
-              (thread-send eval-thread 
-                           (list 'arglist (string->symbol fn) cont)))]
+            (send-to-repl (list 'arglist (string->symbol fn) cont))]
 
            [(list 'swank:swank-macroexpand-1 form)
-            (let ([eval-thread (get-thread ':repl-thread (current-thread))])
-              (thread-send eval-thread (list 'expand 1 form cont)))]
+            (send-to-repl (list 'expand 1 form cont))]
 
            [(list 'swank:swank-macroexpand-all form)
-            (let ([eval-thread (get-thread ':repl-thread (current-thread))])
-              (thread-send eval-thread (list 'expand 0 form cont)))]
+            (send-to-repl (list 'expand 0 form cont))]
+
+           [(list 'swank:compile-file-for-emacs fname load?)
+            (send-to-repl (list 'compile fname load? cont))]
 
            [(list 'swank:autodoc command _ ...)
             (list 'return `(:return (:ok "([x])") ,cont))]
-
-           [(list 'swank:compile-file-for-emacs fname load?)
-            (let ([eval-thread (get-thread ':repl-thread (current-thread))])
-              (thread-send eval-thread (list 'compile fname load? cont)))]
 
            [_ (thread-send
                 (current-thread)
