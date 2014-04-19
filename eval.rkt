@@ -135,11 +135,26 @@
 
 (define (build-error-message exn)
   `(:message ,(exn-message exn)
-    :severity ,(if exn:fail:syntax? ':read ':error)
+    ;; TODO: possibilities for severity are: :error, :read-error, :warning
+    ;; :style-warning :note :redefinition. Probably all but the first two are
+    ;; useless in Racket.
+    :severity ,(if exn:fail:syntax? ':read-error ':error)
     :location ,(build-source-error-location exn)))
 
 (define (build-source-error-location e) 
-  '(:error "No source location"))
+  (if (exn:srclocs? e)
+    (let ([srclcs (car ((exn:srclocs-accessor e) e))])
+     `(:location 
+        ;; TODO: i have to check this: reading slime's source it seems that
+        ;; either (:file :line) or (:buffer :offset) should be present.
+        ;;
+        ;; XXX: aside, there's a small bug in this paredit, ( in comments are
+        ;; highlighted with ) not in comments.
+        (:file ,(path->string (srcloc-source srclcs)))
+        ;,(when (srcloc-position srclcs)
+        ;   `(:position ,(srcloc-position srclcs)))
+        (:line ,(srcloc-line srclcs))))
+    '(:error "No source location")))
 
 (define (make-string-from-arity fnarity)
   (define (prototype-from-int int)
