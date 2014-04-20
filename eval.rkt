@@ -20,56 +20,27 @@
   ;; to trust the user herself (that is, ourselves, since it's mainly
   ;; run locally)
   (parameterize ([current-namespace (make-base-namespace)])
+                (namespace-set-variable-value! '*1 #f)
+                (namespace-set-variable-value! '*2 #f)
+                (namespace-set-variable-value! '*3 #f)
+                (namespace-set-variable-value! '*e #f)
                 (continuously 
                   (dispatch-eval parent-thread (thread-receive)))))
-
-(define (pprint-eval-result res)
-  (cond ([void? res] "; No value")
-        ([exn? res]
-         ;; the exception has already been handled. We should only print it
-         (string-append (exn-message res)
-                        (if (exn:srclocs? exn) 
-                          (exn:srclocs-accessor exn)
-                          "")))
-        (else 
-          (~s res #:max-width 100))))
-
-
-(define (string->datum string-sexp)
-  (let ([in (open-input-string string-sexp)])
-   ((current-read-interaction) (object-name in) in)))
-
-(define (send-back-to thread data cont)
-  (thread-send
-    thread
-    (list 'return `(:return (:ok ,data) ,cont))))
 
 (define (dispatch-eval pthread cmd)
   (match cmd
          [(list 'eval string-sexp cont)
-          ;; string-sexp is, as the name suggest, a string version of a sexp
-          ;; so, first thing, we have to trim and read it.
-          (let ([stripped (trim-code-for-eval string-sexp)]
-                [output-port (open-output-string)])
+          (let ([stripped (trim-code-for-eval string-sexp)])
             (when (not (string=? stripped ""))
               (let* ([stx (string->datum stripped)]
-                     [results 
-                      (with-handlers 
-                        ([exn:fail? (lambda (exn) exn)])
-                        (parameterize ((current-output-port output-port))
-                                      (eval stx)))]
+                     [output-port (open-output-string)]
+                     [result (try-eval stx output-port)]
                      [output (get-output-string output-port)])
-
                 (when (not (string=? output ""))
-                  (thread-send
-                    pthread
-                    (list 'return `(:write-string ,output))))
-
-                (thread-send 
+                  (thread-send pthread (list 'return `(:write-string ,output))))
+                (thread-send
                   pthread 
-                  (list 'eval-result 
-                        (pprint-eval-result results)
-                        cont)))))]
+                  (list 'return `(:return ,result ,cont))))))]
 
          [(list 'complete pattern cont)
           ;; now, there is a problem:
@@ -101,9 +72,12 @@
                 (send-back-to pthread prntarity cont))
               (send-back-to pthread 'nil cont)))]
 
+         [(list 'undefine-function fname cont)
+          (namespace-undefine-variable! (string->symbol fname))
+          (send-back-to pthread fname cont)]
+
          [(list 'compile modname load? cont)
           ;(compile modname load?)
-
           (with-handlers
             ([exn:fail?  
               ;; well, yes, we could be a little more specific, but there
@@ -132,6 +106,28 @@
               ;; enter the namespace of the module
               (current-namespace (module->namespace 
                                    (string->path modname)))))]))
+
+(define (try-eval stx out) 
+  ;; Wraps evaluation of `stx` in a try/except block and redirects 
+  ;; output to `out`.
+  ;; Returns the correct message to be sent to emacs.
+  (with-handlers
+    ([exn:fail? 
+      (lambda (exn) `(:abort ,(print-exception exn)))])
+
+    (let ([result
+           (parameterize ((current-output-port out))
+                         (eval stx))])
+      ;; rotate *-variables (if the current result is not void)
+      (unless (void? result)
+        (multiple-nsvv 
+          '(*3 *2 *1) 
+          (list (namespace-variable-value '*2)
+                (namespace-variable-value '*1)
+                result)))
+      ;; update *e to contain the last expression entered in the REPL.
+      (namespace-set-variable-value!  '*e (syntax->datum stx))
+      `(:ok (:values ,(pprint-eval-result result)))))) 
 
 (define (build-error-message exn)
   `(:message ,(exn-message exn)
@@ -182,3 +178,26 @@
                          "...)")))
         (else ;; it's a list of possible arities: which to show?
           "([x])")))
+
+(define (pprint-eval-result res)
+  (if (void? res)
+    "; No value"
+    (~s res #:max-width 100)))
+
+(define (print-exception exn)
+  ;; the exception has already been handled. We should only print it
+  (string-append (exn-message exn)
+                 (if (exn:srclocs? exn) (exn:srclocs-accessor exn) "")))
+
+(define (string->datum string-sexp)
+  (let ([in (open-input-string string-sexp)])
+   ((current-read-interaction) (object-name in) in)))
+
+(define (send-back-to thread data cont)
+  (thread-send
+    thread
+    (list 'return `(:return (:ok ,data) ,cont))))
+
+(define (multiple-nsvv vars vals)
+  (map namespace-set-variable-value! vars vals))
+

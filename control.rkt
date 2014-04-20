@@ -121,6 +121,9 @@
            [(list 'swank:compile-file-for-emacs fname load?)
             (send-to-repl (list 'compile fname load? cont))]
 
+           [(list 'swank:undefine-function fname)
+            (send-to-repl (list 'undefine-function fname cont))]
+
            [(list 'swank:autodoc command _ ...)
             (list 'return `(:return (:ok "([x])") ,cont))]
 
