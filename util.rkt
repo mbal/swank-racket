@@ -3,8 +3,10 @@
 #lang racket
 (require racket/base
          (only-in srfi/13 string-prefix-ci?))
-(provide swank-serialize
-         trim-code-for-eval
+
+(provide (contract-out
+           [trim-code-for-eval (-> string? string?)]
+           [swank-serialize (-> list? string?)])
          schemify-truth-values
          continuously)
 
