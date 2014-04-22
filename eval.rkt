@@ -11,6 +11,7 @@
          racket/rerequire
          (only-in srfi/13 string-prefix-ci?)
          "complete.rkt"
+         "repl.rkt"
          "util.rkt")
 
 (provide swank-evaluation)
@@ -19,13 +20,15 @@
   ;; we don't use make-evaluator in racket/sandbox because we can assume
   ;; to trust the user herself (that is, ourselves, since it's mainly
   ;; run locally)
-  (parameterize ([current-namespace (make-base-namespace)])
-                (namespace-set-variable-value! '*1 #f)
-                (namespace-set-variable-value! '*2 #f)
-                (namespace-set-variable-value! '*3 #f)
-                (namespace-set-variable-value! '*e #f)
-                (continuously 
-                  (dispatch-eval parent-thread (thread-receive)))))
+  (let ([new-ns (make-base-namespace)])
+   (namespace-attach-module 
+     (namespace-anchor->empty-namespace repl-anchor) 
+     (string->path "repl.rkt") 
+     new-ns)
+   (parameterize ([current-namespace new-ns])
+                 (namespace-require "repl.rkt")
+                 (continuously
+                   (dispatch-eval parent-thread (thread-receive))))))
 
 (define (dispatch-eval pthread cmd)
   (match cmd
@@ -105,12 +108,14 @@
             (when load? 
               ;; enter the namespace of the module
               (current-namespace (module->namespace 
-                                   (string->path modname)))))]))
+                                   (string->path modname)))
+              ;; we have to require again repl.rkt in order to access
+              ;; the * variables.
+              (namespace-require "repl.rkt")))]))
 
 (define (try-eval stx out) 
-  ;; Wraps evaluation of `stx` in a try/except block and redirects 
-  ;; output to `out`.
-  ;; Returns the correct message to be sent to emacs.
+  ;; Wraps evaluation of `stx` in a try/except block and redirects the
+  ;; output to `out`. Returns the correct message to be sent to emacs.
   (with-handlers
     ([exn:fail? 
       (lambda (exn) `(:abort ,(print-exception exn)))])
@@ -118,23 +123,19 @@
     (let ([result
            (parameterize ((current-output-port out))
                          (eval stx))])
-      ;; rotate *-variables (if the current result is not void)
-      (unless (void? result)
-        (multiple-nsvv 
-          '(*3 *2 *1) 
-          (list (namespace-variable-value '*2)
-                (namespace-variable-value '*1)
-                result)))
-      ;; update *e to contain the last expression entered in the REPL.
-      (namespace-set-variable-value!  '*e (syntax->datum stx))
-      `(:ok (:values ,(pprint-eval-result result)))))) 
+      ;; variables in a module can be updated only from within the 
+      ;; module itself. 
+      (update-vars! result *1 *2 (syntax->datum stx))
+      `(:ok (:values ,(pprint-eval-result result))))));)
 
 (define (build-error-message exn)
+  (displayln exn)
+  (flush-output (current-output-port))
   `(:message ,(exn-message exn)
     ;; TODO: possibilities for severity are: :error, :read-error, :warning
     ;; :style-warning :note :redefinition. Probably all but the first two are
     ;; useless in Racket.
-    :severity ,(if exn:fail:syntax? ':read-error ':error)
+    :severity ,(if (exn:fail:read? exn) ':read-error ':error)
     :location ,(build-source-error-location exn)))
 
 (define (build-source-error-location e) 
@@ -147,8 +148,7 @@
         ;; XXX: aside, there's a small bug in this paredit, ( in comments are
         ;; highlighted with ) not in comments.
         (:file ,(path->string (srcloc-source srclcs)))
-        ;,(when (srcloc-position srclcs)
-        ;   `(:position ,(srcloc-position srclcs)))
+        (:position ,(srcloc-position srclcs))
         (:line ,(srcloc-line srclcs))))
     '(:error "No source location")))
 
@@ -186,8 +186,7 @@
 
 (define (print-exception exn)
   ;; the exception has already been handled. We should only print it
-  (string-append (exn-message exn)
-                 (if (exn:srclocs? exn) (exn:srclocs-accessor exn) "")))
+  (string-append (exn-message exn) ""))
 
 (define (string->datum string-sexp)
   (let ([in (open-input-string string-sexp)])
