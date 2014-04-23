@@ -14,16 +14,20 @@
          "repl.rkt"
          "util.rkt")
 
+(require setup/path-to-relative)
+
 (provide swank-evaluation)
 
 (define (swank-evaluation parent-thread)
   ;; we don't use make-evaluator in racket/sandbox because we can assume
   ;; to trust the user herself (that is, ourselves, since it's mainly
-  ;; run locally)
+  ;; run locally).
+  ;; There are two namespaces that share the module `repl.rkt`: the one
+  ;; in which the REPL runs and the namespace of this module.
   (let ([new-ns (make-base-namespace)])
-   (namespace-attach-module 
-     (namespace-anchor->empty-namespace repl-anchor) 
-     (string->path "repl.rkt") 
+   (namespace-attach-module
+     (namespace-anchor->empty-namespace repl-anchor)
+     (string->path "repl.rkt")
      new-ns)
    (parameterize ([current-namespace new-ns])
                  (namespace-require "repl.rkt")
@@ -42,7 +46,7 @@
                 (when (not (string=? output ""))
                   (thread-send pthread (list 'return `(:write-string ,output))))
                 (thread-send
-                  pthread 
+                  pthread
                   (list 'return `(:return ,result ,cont))))))]
 
          [(list 'complete pattern cont)
@@ -66,7 +70,7 @@
               cont))]
 
          [(list 'arglist fnsym cont)
-          (let ([fnobj (with-handlers 
+          (let ([fnobj (with-handlers
                          ([exn:fail? (lambda (exn) #f)])
                          (namespace-variable-value fnsym))])
             (if fnobj
@@ -82,15 +86,15 @@
          [(list 'compile modname load? cont)
           ;(compile modname load?)
           (with-handlers
-            ([exn:fail?  
+            ([exn:fail?
               ;; well, yes, we could be a little more specific, but there
               ;; are many ways in which the compilation process may fail:
               ;; we will handle them in the `build-error-message`.
-              (lambda (exn) 
-                (thread-send 
-                  pthread 
-                  (list 'return 
-                        `(:return (:ok (:compilation-result 
+              (lambda (exn)
+                (thread-send
+                  pthread
+                  (list 'return
+                        `(:return (:ok (:compilation-result
                                          ,(list (build-error-message exn))
                                          nil 0.0 nil nil))
                           ,cont))))])
@@ -105,28 +109,79 @@
                                 `(:return (:ok (:compilation-result nil t 
                                                 ,(/ time 1000.0) nil nil))
                                   ,cont))))
-            (when load? 
+            (when load?
               ;; enter the namespace of the module
-              (current-namespace (module->namespace 
+              (current-namespace (module->namespace
                                    (string->path modname)))
+
+              ;; notify slime that we are in a new `package`
+              (thread-send
+                pthread
+                (list 'return `(:new-package ,modname ,(get-prefix))))
+
               ;; we have to require again repl.rkt in order to access
               ;; the * variables.
               (namespace-require "repl.rkt")))]))
 
-(define (try-eval stx out) 
+(define (get-prefix)
+  (define (module-name)
+    (let* ([x (here-source)]
+           [x (and x (module-displayable-name (if (symbol? x) `',x x)))])
+      (string->symbol x)))
+  (module-name))
+
+(define (here-source) ; returns a path, a symbol, or #f (= not in a module)
+  (variable-reference->module-source
+   (eval (namespace-syntax-introduce
+          (datum->syntax #f `(,#'#%variable-reference))))))
+
+
+(define (->relname x) 
+  (relative-path-pwd (normal-case-path x)))
+
+(define (relative-path-pwd x)
+  (path->string (find-relative-path (normal-case-path (current-directory)) x)))
+
+;;; copied from xrepl
+(define (module-displayable-name mod)
+  (define (choose-path x)
+    ;; choose the shortest from an absolute path, a relative path, and a
+    ;; "~/..." path.
+    (if (not (complete-path? x)) ; shouldn't happen
+      x
+      (let* ([r (path->string (find-relative-path (current-directory) x))]
+             [h (path->string (build-path (string->path-element "~")
+                                          (find-relative-path home-dir x)))]
+             [best (if (< (string-length r) (string-length h)) r h)]
+             [best (if (< (string-length best) (string-length x)) best x)])
+        best)))
+  (define (get-prefix* path)
+    (define x (if (string? path) path (path->string path)))
+    (define y (->relname path))
+    (if (equal? x y)
+      (format "~s" (choose-path x))
+      (regexp-replace #rx"[.]rkt$" y "")))
+  (let loop ([mod mod])
+    (match mod
+      [(? symbol?) (symbol->string mod)]
+      [(list 'quote (? symbol? s)) (format "'~a" (loop s))]
+      [(list 'file (? string? s)) (loop (string->path s))]
+      [(or (? path?) (? string?)) (get-prefix* mod)]
+      [_ (error 'xrepl "internal error; ~v" mod)])))
+
+(define (try-eval stx out)
   ;; Wraps evaluation of `stx` in a try/except block and redirects the
   ;; output to `out`. Returns the correct message to be sent to emacs.
   (with-handlers
-    ([exn:fail? 
+    ([exn:fail?
       (lambda (exn) `(:abort ,(print-exception exn)))])
 
-    (let ([result
-           (parameterize ((current-output-port out))
-                         (eval stx))])
+    (let ([result (parameterize ([current-output-port out])
+                                (eval stx))])
       ;; variables in a module can be updated only from within the 
-      ;; module itself. 
+      ;; module itself.
       (update-vars! result *1 *2 (syntax->datum stx))
-      `(:ok (:values ,(pprint-eval-result result))))));)
+      `(:ok (:values ,(pprint-eval-result result))))))
 
 (define (build-error-message exn)
   (displayln exn)
@@ -134,14 +189,15 @@
   `(:message ,(exn-message exn)
     ;; TODO: possibilities for severity are: :error, :read-error, :warning
     ;; :style-warning :note :redefinition. Probably all but the first two are
-    ;; useless in Racket.
+    ;; useless in Racket. I still need to figure a way to get the list
+    ;; of all errors in the racket module being compiled.
     :severity ,(if (exn:fail:read? exn) ':read-error ':error)
     :location ,(build-source-error-location exn)))
 
-(define (build-source-error-location e) 
+(define (build-source-error-location e)
   (if (exn:srclocs? e)
     (let ([srclcs (car ((exn:srclocs-accessor e) e))])
-     `(:location 
+     `(:location
         ;; TODO: i have to check this: reading slime's source it seems that
         ;; either (:file :line) or (:buffer :offset) should be present.
         ;;
@@ -153,6 +209,12 @@
     '(:error "No source location")))
 
 (define (make-string-from-arity fnarity)
+  ;; we use this function with swank:operator-arglist it's not very smart, and 
+  ;; there isn't a nice way to handle functions with optional arguments
+  ;; SLIMV uses only swank:operator-arglist, but slime doesn't send that
+  ;; message, it prefers a more advanced version, which allows us to check with
+  ;; more precision which arity to show (and highlight arguments in the
+  ;; minibuffer)
   (define (prototype-from-int int)
     ;; unluckily, racket doesn't provide a way to get the argument list
     ;; (i.e. ccl:arglist or clojure's metadata of the variable). 
@@ -162,19 +224,17 @@
     ;; just be happy with this little hack.
     (string-join
       (map string
-           (map integer->char 
+           (map integer->char
                 (map 
                   (lambda (x) (+ x 97)) ;; let's just use letters from #\a
                   (range 0 int))))))
-  (cond ([exact-nonnegative-integer? fnarity] 
+  (cond ([exact-nonnegative-integer? fnarity]
          (string-append "(" (prototype-from-int fnarity) ")"))
-        ([arity-at-least? fnarity] 
+        ([arity-at-least? fnarity]
          (let ([args (prototype-from-int (arity-at-least-value fnarity))])
           (string-append "("
                          args
-                         (if (string=? args "")
-                           ""
-                           " ")
+                         (if (string=? args "") "" " ")
                          "...)")))
         (else ;; it's a list of possible arities: which to show?
           "([x])")))
@@ -186,6 +246,7 @@
 
 (define (print-exception exn)
   ;; the exception has already been handled. We should only print it
+  ;; TODO: line numbers
   (string-append (exn-message exn) ""))
 
 (define (string->datum string-sexp)
