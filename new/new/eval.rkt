@@ -13,6 +13,7 @@
          "complete.rkt"
          "repl.rkt"
          "modutil.rkt"
+         "describe.rkt"
          "util.rkt")
 
 (provide swank-evaluation)
@@ -87,7 +88,7 @@
 
          [(list 'describe strsym cont)
           ;; TODO
-          (send-back-to pthread 'nil cont)]
+          (send-back-to pthread (description (read (open-input-string strsym))) cont)]
 
          [(list 'compile modname load? cont)
           ;(compile modname load?)
