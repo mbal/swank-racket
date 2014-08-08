@@ -12,8 +12,9 @@
          (only-in srfi/13 string-prefix-ci?)
          "complete.rkt"
          "repl.rkt"
-         "modutil.rkt"
          "util.rkt")
+
+(require setup/path-to-relative)
 
 (provide swank-evaluation)
 
@@ -79,15 +80,8 @@
               (send-back-to pthread 'nil cont)))]
 
          [(list 'undefine-function fname cont)
-          (let ([fnsym (string->symbol fname)])
-            (if (namespace-variable-value fnsym #t (lambda () #f))
-              (begin (namespace-undefine-variable! (string->symbol fname))
-                     (send-back-to pthread fname cont))
-              (send-back-to pthread 'nil cont)))]
-
-         [(list 'describe strsym cont)
-          ;; TODO
-          (send-back-to pthread 'nil cont)]
+          (namespace-undefine-variable! (string->symbol fname))
+          (send-back-to pthread fname cont)]
 
          [(list 'compile modname load? cont)
           ;(compile modname load?)
@@ -129,6 +123,52 @@
               ;; the * variables.
               (namespace-require "repl.rkt")))]))
 
+(define (get-prefix)
+  (define (module-name)
+    (let* ([x (here-source)]
+           [x (and x (module-displayable-name (if (symbol? x) `',x x)))])
+      (string->symbol x)))
+  (module-name))
+
+(define (here-source) ; returns a path, a symbol, or #f (= not in a module)
+  (variable-reference->module-source
+   (eval (namespace-syntax-introduce
+          (datum->syntax #f `(,#'#%variable-reference))))))
+
+
+(define (->relname x) 
+  (relative-path-pwd (normal-case-path x)))
+
+(define (relative-path-pwd x)
+  (path->string (find-relative-path (normal-case-path (current-directory)) x)))
+
+;;; copied from xrepl
+(define (module-displayable-name mod)
+  (define (choose-path x)
+    ;; choose the shortest from an absolute path, a relative path, and a
+    ;; "~/..." path.
+    (if (not (complete-path? x)) ; shouldn't happen
+      x
+      (let* ([r (path->string (find-relative-path (current-directory) x))]
+             [h (path->string (build-path (string->path-element "~")
+                                          (find-relative-path home-dir x)))]
+             [best (if (< (string-length r) (string-length h)) r h)]
+             [best (if (< (string-length best) (string-length x)) best x)])
+        best)))
+  (define (get-prefix* path)
+    (define x (if (string? path) path (path->string path)))
+    (define y (->relname path))
+    (if (equal? x y)
+      (format "~s" (choose-path x))
+      (regexp-replace #rx"[.]rkt$" y "")))
+  (let loop ([mod mod])
+    (match mod
+      [(? symbol?) (symbol->string mod)]
+      [(list 'quote (? symbol? s)) (format "'~a" (loop s))]
+      [(list 'file (? string? s)) (loop (string->path s))]
+      [(or (? path?) (? string?)) (get-prefix* mod)]
+      [_ (error 'xrepl "internal error; ~v" mod)])))
+
 (define (try-eval stx out)
   ;; Wraps evaluation of `stx` in a try/except block and redirects the
   ;; output to `out`. Returns the correct message to be sent to emacs.
@@ -149,7 +189,7 @@
   `(:message ,(exn-message exn)
     ;; TODO: possibilities for severity are: :error, :read-error, :warning
     ;; :style-warning :note :redefinition. Probably all but the first two are
-    ;; useless in Racket. I still need to figure out a way to get the list
+    ;; useless in Racket. I still need to figure a way to get the list
     ;; of all errors in the racket module being compiled.
     :severity ,(if (exn:fail:read? exn) ':read-error ':error)
     :location ,(build-source-error-location exn)))
@@ -206,10 +246,8 @@
 
 (define (print-exception exn)
   ;; the exception has already been handled. We should only print it
-  (string-append (exn-message exn) 
-                 (if (exn:srclocs? exn)
-                   (srcloc-position (car ((exn:srclocs-accessor exn) exn)))
-                   "")))
+  ;; TODO: line numbers
+  (string-append (exn-message exn) ""))
 
 (define (string->datum string-sexp)
   (let ([in (open-input-string string-sexp)])

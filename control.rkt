@@ -124,9 +124,6 @@
            [(list 'swank:undefine-function fname)
             (send-to-repl (list 'undefine-function fname cont))]
 
-           [(list 'swank:describe-symbol strsym)
-            (send-to-repl (list 'describe strsym cont))]
-
            [(list 'swank:autodoc command _ ...)
             (list 'return `(:return (:ok "([x])") ,cont))]
 
