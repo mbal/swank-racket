@@ -124,6 +124,22 @@
            [(list 'swank:undefine-function fname)
             (send-to-repl (list 'undefine-function fname cont))]
 
+           [(list 'swank:swank-toggle-trace strfn)
+            ;; TODO
+            (send-to-repl (list 'toggle-trace strfn cont))]
+
+           [(list 'swank:toggle-profile-fdefinition fname cont)
+            ;;TODO
+            (send-to-repl (list 'toggle-profile fname cont))]
+
+           [(list 'swank:apropos-list-for-emacs symb t nil nil2)
+            ;;TODO
+            (send-to-repl (list 'apropos symb cont))] 
+
+           [(list 'swank:list-all-package-names t)
+            ;;TODO
+            (send-to-repl (list 'list-packages t cont))]
+
            [(list 'swank:describe-symbol strsym)
             (send-to-repl (list 'describe strsym cont))]
 
